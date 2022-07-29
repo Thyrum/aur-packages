@@ -1,0 +1,51 @@
+name: unciv-bin
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 30 09 * * *
+  repository_dispatch:
+    types: [unciv-new-release]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the latest package version
+        run: |
+          curl --silent --output latest.json 'https://api.github.com/repos/yairm210/Unciv/releases/latest'
+          echo "UNCIV_VERSION=$(jq --raw-output .tag_name latest.json)" >> $GITHUB_ENV
+          echo "UNCIV_UPDATE_INFO<<EOF" >> $GITHUB_ENV
+          echo "$(jq --raw-output .body latest.json)" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+      - name: Get the latest PKGBUILD
+        run: |
+          curl --silent --output PKGBUILD 'https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=unciv-bin'
+          echo "UNCIV_PREVIOUS_VERSION=$(grep PKGBUILD -e "^_pkgver=" | sed -e "s/^_pkgver=//g")" >> $GITHUB_ENV
+      - name: Update PKGBUILD
+        if: env.UNCIV_VERSION != env.UNCIV_PREVIOUS_VERSION
+        run: |
+          sed -E -e "s#(_pkgver=).*#\1${{ env.UNCIV_VERSION }}#" -e "s#(pkgrel=).*#\10#" -i PKGBUILD
+      - name: Publish AUR package
+        if: env.UNCIV_VERSION != env.UNCIV_PREVIOUS_VERSION
+        uses: Thyrum/github-actions-deploy-aur@master
+        with:
+          pkgname: unciv-bin
+          pkgbuild: ./PKGBUILD
+          commit_username: ${{ secrets.AUR_COMMIT_USERNAME }}
+          commit_email: ${{ secrets.AUR_COMMIT_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: |
+            Update to ${{ env.UNCIV_VERSION }}
+            
+            ${{ env.UNCIV_UPDATE_INFO }}
+          ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
+          updpkgsums: true
+          allow_empty_commits: false
+      - name: Add workflow summary
+        run: |
+          if [ ${{ env.UNCIV_VERSION }} = ${{ env.UNCIV_PREVIOUS_VERSION }} ]; then
+            echo 'Already at latest version: [`${{ env.UNCIV_VERSION }}`](https://github.com/yairm210/Unciv/releases/tag/${{ env.UNCIV_VERSION }})' >> $GITHUB_STEP_SUMMARY
+          else
+            echo 'Updated from [`${{ env.UNCIV_PREVIOUS_VERSION }}`](https://github.com/yairm210/Unciv/releases/tag/${{ env.UNCIV_PREVIOUS_VERSION }}) to [`${{ env.UNCIV_VERSION }}`](https://github.com/yairm210/Unciv/releases/tag/${{ env.UNCIV_VERSION }})' >> $GITHUB_STEP_SUMMARY
+          fi
